@@ -1,0 +1,45 @@
+version: 0.2
+
+# ─── CodeBuild Buildspec ──────────────────────────────────────
+# Builds frontend + backend Docker images, pushes to ECR,
+# outputs imagedefinitions JSON for ECS deployment.
+
+phases:
+  pre_build:
+    commands:
+      - echo "Logging in to Amazon ECR..."
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c1-7)
+      - IMAGE_TAG=${COMMIT_HASH:=latest}
+      - FRONTEND_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$ECR_FRONTEND
+      - BACKEND_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$ECR_BACKEND
+
+  build:
+    commands:
+      - echo "Building frontend Docker image..."
+      - docker build -f docker/Dockerfile.frontend -t $FRONTEND_URI:$IMAGE_TAG -t $FRONTEND_URI:latest .
+      - echo "Building backend Docker image..."
+      - docker build -f docker/Dockerfile.backend -t $BACKEND_URI:$IMAGE_TAG -t $BACKEND_URI:latest .
+
+  post_build:
+    commands:
+      - echo "Pushing images to ECR..."
+      - docker push $FRONTEND_URI:$IMAGE_TAG
+      - docker push $FRONTEND_URI:latest
+      - docker push $BACKEND_URI:$IMAGE_TAG
+      - docker push $BACKEND_URI:latest
+      - echo "Writing imagedefinitions files..."
+      - printf '[{"name":"frontend","imageUri":"%s"}]' $FRONTEND_URI:$IMAGE_TAG > imagedefinitions-frontend.json
+      - printf '[{"name":"backend","imageUri":"%s"}]' $BACKEND_URI:$IMAGE_TAG > imagedefinitions-backend.json
+      - echo "Build complete!"
+
+artifacts:
+  files:
+    - imagedefinitions-frontend.json
+    - imagedefinitions-backend.json
+
+cache:
+  paths:
+    - /root/.npm/**/*
+    - frontend/node_modules/**/*
+    - backend/node_modules/**/*
